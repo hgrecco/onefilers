@@ -1,12 +1,36 @@
 
-import pandas as pd
+import collections
+import hashlib
+
+try:
+    import dill as pickle
+except ImportError:
+    print('dill not installed, please do it by running\npip install dill')
+    raise
+
+try:
+    import pandas as pd
+except ImportError:
+    print('pandas not installed, please do it by running\npip install pandas')
+    raise
 
 
 #: Filename for data summary
-FILENAME = 'summary.pandas'
+SUMMARY_FILENAME = 'summary.pandas'
 
 #: Filename for exception summary
 ERRORS_FILENAME = 'errors.pandas'
+
+#: Filename for hash summary
+HASH_FILENAME = 'pda.txt'
+
+
+class PDAError(Exception):
+    pass
+
+
+def _hasher(obj):
+    return hashlib.sha1(pickle.dumps(obj)).hexdigest()
 
 
 def is_namedtuple_instance(x):
@@ -17,7 +41,7 @@ def is_namedtuple_instance(x):
             getattr(x, '_fields', None) is not None)
 
 
-def process_folder(path, funcs, use_cache=True, save_cache=True):
+def process_folder(path, funcs):
     """Process a folder capturing the information in a a DataFrame.
 
     Parameters
@@ -31,8 +55,6 @@ def process_folder(path, funcs, use_cache=True, save_cache=True):
                      Same signature as process_folder.
         file_func: a callable to process files found in this level.
                    Same signature as process_folder
-    use_cache : bool
-    save_cache : bool
 
     Returns
     -------
@@ -41,23 +63,6 @@ def process_folder(path, funcs, use_cache=True, save_cache=True):
     """
 
     (level_name, folder_func, file_func), funcs = funcs[0], funcs[1:]
-
-    if use_cache:
-        df = edf = None
-
-        try:
-            p = path.joinpath(FILENAME)
-            if p.exists():
-                df = pd.read_pickle(str(p))
-
-            p = path.joinpath(FILENAME)
-            if edf.exists():
-                edf = pd.read_pickle(str(p))
-
-            return df, edf
-
-        except Exception:
-            pass
 
     all_df = []
     all_edf = []
@@ -74,36 +79,145 @@ def process_folder(path, funcs, use_cache=True, save_cache=True):
 
         if df is not None:
             if level_name in df.columns:
-                raise Exception('Column name %s is already taken in data dataframe' % level_name)
+                raise PDAError('Column name %s is already taken in data dataframe' % level_name)
 
             df[level_name] = [p.name, ] * len(df)
             all_df.append(df)
 
         if edf is not None:
             if level_name in edf.columns:
-                raise Exception('Column name %s is already taken in error dataframe' % level_name)
+                raise PDAError('Column name %s is already taken in error dataframe' % level_name)
 
             edf[level_name] = [p.name, ] * len(edf)
             all_edf.append(edf)
 
     if all_df:
-        df = pd.concat(all_df)
-        if save_cache:
-            df.to_pickle(str(path.joinpath(FILENAME)))
+        try:
+            out_df = pd.concat(all_df)
+        except:
+            raise PDAError('Could not concatenate dataframes. '
+                           'Is the output of all analyzing functions homogenoeus?')
     else:
-        df = None
+        out_df = None
 
     if all_edf:
-        edf = pd.concat(all_edf)
-        if save_cache:
-            edf.to_pickle(str(path.joinpath(ERRORS_FILENAME)))
+        out_edf = pd.concat(all_edf)
     else:
-        edf = None
+        out_edf = None
 
-    return df, edf
+    return out_df, out_edf
 
 
-def dictfunc_to_dataframe(func, *args, **kwargs):
+def process_folder_store(path, funcs):
+    """Process a folder capturing the information in a a DataFrame.
+    Store each a summary file in each path.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        folder to process
+    funcs : List of (string, callable, callable)
+        Each triplet is (level_name, folder_func, file_func)
+        level_name: a description of the folder level.
+        folder_func: a callable to process folders found in this level.
+                     Same signature as process_folder.
+        file_func: a callable to process files found in this level.
+                   Same signature as process_folder
+
+    Returns
+    -------
+    data : DataFrame
+    errors : DataFrame
+    """
+
+    out_df, out_edf = process_folder(path, funcs)
+
+    if out_df is not None:
+        out_df.to_pickle(str(path.joinpath(SUMMARY_FILENAME)))
+    if out_edf is not None:
+        out_edf.to_pickle(str(path.joinpath(ERRORS_FILENAME)))
+
+    return out_df, out_edf
+
+
+def process_folder_cache(path, funcs):
+    """Process a folder capturing the information in a a DataFrame.
+    Store each a summary file in each path and load is if available.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        folder to process
+    funcs : List of (string, callable, callable)
+        Each triplet is (level_name, folder_func, file_func)
+        level_name: a description of the folder level.
+        folder_func: a callable to process folders found in this level.
+                     Same signature as process_folder.
+        file_func: a callable to process files found in this level.
+                   Same signature as process_folder
+
+    Returns
+    -------
+    data : DataFrame
+    errors : DataFrame
+    """
+
+    # We only use the cache if the hash file exists and matches
+    # the current value
+
+    current_hash = _hasher(funcs)
+
+    p = path.joinpath(HASH_FILENAME)
+
+    if p.exists():
+        stored_hash = p.read_text(encoding='utf-8')
+
+        if stored_hash == current_hash:
+
+            p = path.joinpath(SUMMARY_FILENAME)
+            if p.exists():
+                df = pd.read_pickle(str(p))
+            else:
+                df = None
+
+            p = path.joinpath(ERRORS_FILENAME)
+            if p.exists():
+                edf = pd.read_pickle(str(p))
+            else:
+                edf = None
+
+            return df, edf
+
+    out_df, out_edf = process_folder_store(path, funcs)
+
+    path.joinpath(HASH_FILENAME).write_text(current_hash,
+                                            encoding='utf-8')
+
+    return out_df, out_edf
+
+
+def _expand_namedtuple_in_dict(d, **extra):
+    """Helper function to expand named tuples in dict.
+
+    For each field in tha namedtuple corresponding to key
+    a new item is added to the dict with key_field=value.field
+
+    """
+    out = {}
+    for key, value in d.items():
+        if is_namedtuple_instance(value):
+            for k in value._fields:
+                out[key + '_' + k] = getattr(value, k)
+        else:
+            out[key] = value
+
+    for k, v in extra.items():
+        out[k] = v
+
+    return out
+
+
+def to_dataframe(func, *args, **kwargs):
     """Helper function to convert a function that returns a dictionary
     into a function that returns a DataFrame
 
@@ -127,19 +241,21 @@ def dictfunc_to_dataframe(func, *args, **kwargs):
             if tmp is None:
                 return None, None
 
-            out = {}
-            for key, value in tmp.items():
-                if is_namedtuple_instance(value):
-                    for k in value._fields:
-                        out[key + '_' + k] = getattr(value, k)
-                else:
-                    out[key] = value
+            if isinstance(tmp, dict):
+                out = [_expand_namedtuple_in_dict(tmp, path=str(p))]
+            elif isinstance(tmp, list):
+                out = [_expand_namedtuple_in_dict(el, path=str(p))
+                       for el in tmp]
+            else:
+                raise PDAError('to_dataframe valid input types are dict and list')
 
-            out['path'] = str(p)
-            df = pd.DataFrame.from_dict([out])
+            df = pd.DataFrame.from_dict(out)
+
+        except PDAError:
+            raise
 
         except Exception as ex:
-            edf = pd.DataFrame.from_dict({path: str(p), exc: str(ex)})
+            edf = pd.DataFrame.from_dict([dict(path=str(p), exc=str(ex))])
 
         return df, edf
 
@@ -168,10 +284,14 @@ if __name__ == '__main__':
     funcs = [('date', process_folder, None),
              ('group', process_folder, None),
              ('fov', process_folder, None),
-             ('_', None, dictfunc_to_dataframe(analyze_file))]
+             ('_', None, to_dataframe(analyze_file))]
+
+    print('Hash: %s' % _hasher(funcs))
 
     root = pathlib.Path('/path/to/folder')
-    df, edf = process_folder(root, funcs)
+    df, edf = process_folder_cache(root, funcs)
 
     print(df)
     print(edf)
+
+
