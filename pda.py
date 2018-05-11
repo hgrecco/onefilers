@@ -79,14 +79,14 @@ def process_folder(path, funcs):
 
         if df is not None:
             if level_name in df.columns:
-                raise PDAError('Column name %s is already taken in data dataframe' % level_name)
+                raise PDAError("Column name '%s' is already taken in data dataframe" % level_name)
 
             df[level_name] = [p.name, ] * len(df)
             all_df.append(df)
 
         if edf is not None:
             if level_name in edf.columns:
-                raise PDAError('Column name %s is already taken in error dataframe' % level_name)
+                raise PDAError("Column name '%s' is already taken in error dataframe" % level_name)
 
             edf[level_name] = [p.name, ] * len(edf)
             all_edf.append(edf)
@@ -234,30 +234,24 @@ def to_dataframe(func, *args, **kwargs):
     """
 
     def _inner(p, funcs):
-        df = edf = None
+
         try:
             tmp = func(p, *args, **kwargs)
-
-            if tmp is None:
-                return None, None
-
-            if isinstance(tmp, dict):
-                out = [_expand_namedtuple_in_dict(tmp, path=str(p))]
-            elif isinstance(tmp, list):
-                out = [_expand_namedtuple_in_dict(el, path=str(p))
-                       for el in tmp]
-            else:
-                raise PDAError('to_dataframe valid input types are dict and list')
-
-            df = pd.DataFrame.from_dict(out)
-
-        except PDAError:
-            raise
-
         except Exception as ex:
-            edf = pd.DataFrame.from_dict([dict(path=str(p), exc=str(ex))])
+            return None, pd.DataFrame.from_dict([dict(path=str(p), exc=str(ex))])
 
-        return df, edf
+        if tmp is None:
+            return None, None
+
+        if isinstance(tmp, dict):
+            out = [_expand_namedtuple_in_dict(tmp, path=str(p))]
+        elif isinstance(tmp, list):
+            out = [_expand_namedtuple_in_dict(el, path=str(p))
+                   for el in tmp]
+        else:
+            raise PDAError("to_dataframe valid input types are dict and list, not '%s'" % type(tmp))
+
+        return pd.DataFrame.from_dict(out), None
 
     return _inner
 
@@ -279,7 +273,6 @@ if __name__ == '__main__':
         with p.open('r', encoding='utf-8') as fi:
             return {'chars': len(fi.read())}
 
-
     # This defines the folder hierarchy
     funcs = [('date', process_folder, None),
              ('group', process_folder, None),
@@ -289,9 +282,14 @@ if __name__ == '__main__':
     print('Hash: %s' % _hasher(funcs))
 
     root = pathlib.Path('/path/to/folder')
-    df, edf = process_folder_cache(root, funcs)
+    df, edf = process_folder(root, funcs)
 
+    print('df')
+    print('--')
     print(df)
+    print()
+    print('edf')
+    print('---')
     print(edf)
 
 
