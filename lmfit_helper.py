@@ -1,12 +1,16 @@
 
 import lmfit
-
 import matplotlib.pyplot as plt
-
+import numpy as np
 from scipy.interpolate import interp1d
 
-from contours.core import numpy_formatter
-from contours.quad import QuadContourGenerator
+try:
+    from contours.core import numpy_formatter
+    from contours.quad import QuadContourGenerator
+    import shapely
+except ImportError:
+    print('contours and/or shapely not installed, please do it by running\npip install contours shapely')
+    raise
 
 
 def fit_plots(x, y, minimizer, minimizer_result, residual,
