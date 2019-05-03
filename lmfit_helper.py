@@ -97,7 +97,7 @@ def fit_plots(x, y, minimizer, minimizer_result, residual,
                 contours[ndx1] = (x, y)
 
             else:
-                x, y, m = lmfit.conf_interval2d(minimizer, out, param_names[ndx1], param_names[ndx2], 20, 20)
+                x, y, m = lmfit.conf_interval2d(minimizer, minimizer_result, param_names[ndx1], param_names[ndx2], 20, 20)
                 ax.contourf(x, y, m, np.linspace(0, 1, 10), cmap=cmap)
 
                 ch = QuadContourGenerator.from_rectilinear(x, y, m, numpy_formatter)
